@@ -2,123 +2,221 @@ import {
   Blockhash,
   createSolanaClient,
   createTransaction,
-  generateKeyPairSigner,
+  getProgramDerivedAddress,
+  getU64Encoder,
   Instruction,
-  isSolanaError,
   KeyPairSigner,
   signTransactionMessageWithSigners,
 } from 'gill'
 import {
-  fetchVoting,
-  getCloseInstruction,
-  getDecrementInstruction,
-  getIncrementInstruction,
-  getInitializeInstruction,
-  getSetInstruction,
+  fetchPoll,
+  getInitializePollInstructionAsync,
+  getInitializeCandidateInstructionAsync,
+  fetchCandidate,
+  getVoteInstructionAsync,
 } from '../src'
-// @ts-ignore error TS2307 suggest setting `moduleResolution` but this is already configured
+import { VOTING_PROGRAM_ADDRESS } from '../src/client/js/generated/programs/voting'
+import { createHash } from 'crypto'
 import { loadKeypairSignerFromFile } from 'gill/node'
 
 const { rpc, sendAndConfirmTransaction } = createSolanaClient({ urlOrMoniker: process.env.ANCHOR_PROVIDER_URL! })
 
 describe('voting', () => {
   let payer: KeyPairSigner
-  let voting: KeyPairSigner
 
   beforeAll(async () => {
-    voting = await generateKeyPairSigner()
     payer = await loadKeypairSignerFromFile(process.env.ANCHOR_WALLET!)
   })
 
-  it('Initialize Voting', async () => {
+  it('Initialize Poll and Candidate', async () => {
     // ARRANGE
-    expect.assertions(1)
-    const ix = getInitializeInstruction({ payer: payer, voting: voting })
+    expect.assertions(7)
+    const pollId = 1n
+    const description = 'Test poll'
+    const pollStart = BigInt(Date.now())
+    const pollEnd = BigInt(Date.now() + 86400000)
+    const candidateName = 'Test candidate'
 
-    // ACT
-    await sendAndConfirm({ ix, payer })
+    console.log('=== DEBUG: Starting test ===')
+    console.log('pollId:', pollId.toString())
+    console.log('candidateName:', candidateName)
 
-    // ASSER
-    const currentVoting = await fetchVoting(rpc, voting.address)
-    expect(currentVoting.data.count).toEqual(0)
-  })
-
-  it('Increment Voting', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getIncrementInstruction({
-      voting: voting.address,
+    // Create poll first
+    const pollIx = await getInitializePollInstructionAsync({
+      signer: payer,
+      pollId,
+      description,
+      pollStart,
+      pollEnd,
     })
 
-    // ACT
-    await sendAndConfirm({ ix, payer })
-
-    // ASSERT
-    const currentCount = await fetchVoting(rpc, voting.address)
-    expect(currentCount.data.count).toEqual(1)
-  })
-
-  it('Increment Voting Again', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getIncrementInstruction({ voting: voting.address })
-
-    // ACT
-    await sendAndConfirm({ ix, payer })
-
-    // ASSERT
-    const currentCount = await fetchVoting(rpc, voting.address)
-    expect(currentCount.data.count).toEqual(2)
-  })
-
-  it('Decrement Voting', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getDecrementInstruction({
-      voting: voting.address,
+    console.log('\n=== DEBUG: Poll Instruction ===')
+    console.log('Poll instruction accounts:')
+    pollIx.accounts.forEach((acc, idx) => {
+      const writable = 'isWritable' in acc ? acc.isWritable : undefined
+      const signer = 'isSigner' in acc ? acc.isSigner : undefined
+      console.log(`  [${idx}] ${acc.address} (writable: ${writable}, signer: ${signer})`)
     })
+    const pollAddressFromPollIx = pollIx.accounts[1].address
+    console.log('Poll address from pollIx:', pollAddressFromPollIx)
 
-    // ACT
-    await sendAndConfirm({ ix, payer })
-
-    // ASSERT
-    const currentCount = await fetchVoting(rpc, voting.address)
-    expect(currentCount.data.count).toEqual(1)
-  })
-
-  it('Set voting value', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getSetInstruction({ voting: voting.address, value: 42 })
-
-    // ACT
-    await sendAndConfirm({ ix, payer })
-
-    // ASSERT
-    const currentCount = await fetchVoting(rpc, voting.address)
-    expect(currentCount.data.count).toEqual(42)
-  })
-
-  it('Set close the voting account', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getCloseInstruction({
-      payer: payer,
-      voting: voting.address,
-    })
-
-    // ACT
-    await sendAndConfirm({ ix, payer })
-
-    // ASSERT
+    // ACT - Create poll
     try {
-      await fetchVoting(rpc, voting.address)
-    } catch (e) {
-      if (!isSolanaError(e)) {
-        throw new Error(`Unexpected error: ${e}`)
-      }
-      expect(e.message).toEqual(`Account not found at address: ${voting.address}`)
+      await sendAndConfirm({ ix: pollIx, payer })
+      console.log('✓ Poll created successfully')
+    } catch (error) {
+      console.error('✗ Failed to create poll:', error)
+      throw error
     }
+
+    // ASSERT - Verify poll
+    const poll = await fetchPoll(rpc, pollIx.accounts[1].address)
+    console.log('Poll data:', {
+      pollId: poll.data.pollId.toString(),
+      description: poll.data.description,
+      candidateAmount: poll.data.candidateAmount.toString(),
+    })
+    expect(poll.data.pollId).toEqual(pollId)
+    expect(poll.data.description).toEqual(description)
+    expect(poll.data.pollStart).toEqual(pollStart)
+    expect(poll.data.pollEnd).toEqual(pollEnd)
+    expect(poll.data.candidateAmount).toEqual(0n)
+
+    // Create candidate using the same poll - pass the poll address explicitly
+    const pollAddress = pollIx.accounts[1].address
+
+    console.log('\n=== DEBUG: Candidate Instruction ===')
+    console.log('pollId being used:', pollId.toString())
+    console.log('pollAddress being passed:', pollAddress)
+
+    // Hash the candidate name to match Rust's hashed seed
+    // Rust uses: candidate_name.to_hashed_bytes() which calls hash(candidate_name.as_bytes()).to_bytes()
+    // So we need: SHA-256 hash of candidateName (32 bytes)
+    const hashedCandidateName = createHash('sha256').update(candidateName, 'utf-8').digest()
+    console.log('Hashed candidate name:', hashedCandidateName.toString('hex'))
+
+    // Derive candidate PDA using the hash (matching Rust's seed)
+    const [candidateAddress] = await getProgramDerivedAddress({
+      programAddress: VOTING_PROGRAM_ADDRESS,
+      seeds: [
+        hashedCandidateName, // SHA-256 hash (32 bytes)
+        getU64Encoder().encode(pollId),
+      ],
+    })
+    console.log('Derived candidate address (with hash):', candidateAddress)
+
+    // Use Codama's auto-generated code - pass the derived address explicitly
+    // This bypasses Codama's auto-derivation (which would use string with size prefix)
+    // Now we're using Codama's code but with the correct hashed PDA
+    const candidateIx = await getInitializeCandidateInstructionAsync({
+      signer: payer,
+      poll: pollAddress,
+      candidate: candidateAddress, // Pass the derived address with hash
+      candidateName, // Still pass the original name for instruction data
+      pollId,
+    })
+
+    console.log('Candidate instruction accounts:')
+    candidateIx.accounts.forEach((acc, idx) => {
+      const writable = 'isWritable' in acc ? acc.isWritable : undefined
+      const signer = 'isSigner' in acc ? acc.isSigner : undefined
+      console.log(`  [${idx}] ${acc.address} (writable: ${writable}, signer: ${signer})`)
+    })
+    const pollAddressFromCandidateIx = candidateIx.accounts[1].address
+    const candidateAddressFromCandidateIx = candidateIx.accounts[2].address
+    console.log('Poll address from candidateIx:', pollAddressFromCandidateIx)
+    console.log('Candidate address from candidateIx:', candidateAddressFromCandidateIx)
+    console.log('Poll addresses match:', pollAddressFromPollIx === pollAddressFromCandidateIx)
+
+    // ACT - Create candidate
+    try {
+      await sendAndConfirm({ ix: candidateIx, payer })
+      console.log('✓ Candidate created successfully')
+    } catch (error) {
+      console.error('✗ Failed to create candidate:', error)
+      if (error && typeof error === 'object' && 'context' in error) {
+        const ctx = (error as { context?: { logs?: string[] } }).context
+        if (ctx && ctx.logs) {
+          console.error('Program logs:')
+          ctx.logs.forEach((log: string) => console.error('  ', log))
+        }
+      }
+      throw error
+    }
+
+    // ASSERT - Verify candidate (candidate is at accounts[2]: signer=0, poll=1, candidate=2, systemProgram=3)
+    const candidate = await fetchCandidate(rpc, candidateIx.accounts[2].address)
+    console.log('Candidate data:', {
+      candidateName: candidate.data.candidateName,
+      candidateVotes: candidate.data.candidateVotes.toString(),
+    })
+    expect(candidate.data.candidateName).toEqual(candidateName)
+    expect(candidate.data.candidateVotes).toEqual(0n)
+
+    console.log('\n=== DEBUG: Test completed successfully ===')
+  })
+
+  it('Vote for Candidate', async () => {
+    // ARRANGE
+    expect.assertions(3)
+    const pollId = 2n
+    const description = 'Vote test poll'
+    const pollStart = BigInt(Date.now())
+    const pollEnd = BigInt(Date.now() + 86400000)
+    const candidateName = 'Vote test candidate'
+
+    // Create poll first
+    const pollIx = await getInitializePollInstructionAsync({
+      signer: payer,
+      pollId,
+      description,
+      pollStart,
+      pollEnd,
+    })
+    await sendAndConfirm({ ix: pollIx, payer })
+    const pollAddress = pollIx.accounts[1].address
+
+    // Hash the candidate name to match Rust's hashed seed
+    const hashedCandidateName = createHash('sha256').update(candidateName, 'utf-8').digest()
+
+    // Derive candidate PDA using the hash (matching Rust's seed)
+    const [candidateAddress] = await getProgramDerivedAddress({
+      programAddress: VOTING_PROGRAM_ADDRESS,
+      seeds: [
+        hashedCandidateName, // SHA-256 hash (32 bytes)
+        getU64Encoder().encode(pollId),
+      ],
+    })
+
+    // Create candidate
+    const candidateIx = await getInitializeCandidateInstructionAsync({
+      signer: payer,
+      poll: pollAddress,
+      candidate: candidateAddress, // Pass the derived address with hash
+      candidateName, // Still pass the original name for instruction data
+      pollId,
+    })
+    await sendAndConfirm({ ix: candidateIx, payer })
+
+    // Get initial vote count
+    const candidateBefore = await fetchCandidate(rpc, candidateAddress)
+    const initialVotes = candidateBefore.data.candidateVotes
+    expect(initialVotes).toEqual(0n)
+
+    // ACT - Vote
+    const voteIx = await getVoteInstructionAsync({
+      signer: payer,
+      poll: pollAddress,
+      candidate: candidateAddress, // Pass the derived address with hash
+      candidateName, // Still pass the original name for instruction data
+      pollId,
+    })
+    await sendAndConfirm({ ix: voteIx, payer })
+
+    // ASSERT - Verify vote count increased
+    const candidateAfter = await fetchCandidate(rpc, candidateAddress)
+    expect(candidateAfter.data.candidateVotes).toEqual(1n)
+    expect(candidateAfter.data.candidateVotes).toBeGreaterThan(initialVotes)
   })
 })
 
@@ -134,12 +232,22 @@ async function getLatestBlockhash(): Promise<Readonly<{ blockhash: Blockhash; la
     .then(({ value }) => value)
 }
 async function sendAndConfirm({ ix, payer }: { ix: Instruction; payer: KeyPairSigner }) {
-  const tx = createTransaction({
-    feePayer: payer,
-    instructions: [ix],
-    version: 'legacy',
-    latestBlockhash: await getLatestBlockhash(),
-  })
-  const signedTransaction = await signTransactionMessageWithSigners(tx)
-  return await sendAndConfirmTransaction(signedTransaction)
+  try {
+    const tx = createTransaction({
+      feePayer: payer,
+      instructions: [ix],
+      version: 'legacy',
+      latestBlockhash: await getLatestBlockhash(),
+    })
+    const signedTransaction = await signTransactionMessageWithSigners(tx)
+    const result = await sendAndConfirmTransaction(signedTransaction)
+    return result
+  } catch (error) {
+    console.error('sendAndConfirm error:', error)
+    if (error instanceof Error) {
+      console.error('Error message:', error.message)
+      console.error('Error stack:', error.stack)
+    }
+    throw error
+  }
 }

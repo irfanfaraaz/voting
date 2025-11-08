@@ -1,13 +1,13 @@
 [toolchain]
-package_manager = "yarn"
 anchor_version = "0.31.1"
+package_manager = "yarn"
 
 [features]
 resolution = true
 skip-lint = false
 
 [programs.localnet]
-voting = "ATgR6mW6mg9WgQrhnUXqrp9zgteiaEo23qi4hRrQcxmh"
+voting = "4aW7bxu9uKuVasuBoRkCnHHzn7SK53n814VZQd9q1Xqx"
 
 [registry]
 url = "https://api.apr.dev"
@@ -18,5 +18,3 @@ wallet = "~/.config/solana/id.json"
 
 [scripts]
 test = "vitest"
-
-

@@ -14,18 +14,17 @@ import {
   type ReadonlyUint8Array,
 } from 'gill';
 import {
-  type ParsedCloseInstruction,
-  type ParsedDecrementInstruction,
-  type ParsedIncrementInstruction,
-  type ParsedInitializeInstruction,
-  type ParsedSetInstruction,
+  type ParsedInitializeCandidateInstruction,
+  type ParsedInitializePollInstruction,
+  type ParsedVoteInstruction,
 } from '../instructions';
 
 export const VOTING_PROGRAM_ADDRESS =
-  'ATgR6mW6mg9WgQrhnUXqrp9zgteiaEo23qi4hRrQcxmh' as Address<'ATgR6mW6mg9WgQrhnUXqrp9zgteiaEo23qi4hRrQcxmh'>;
+  '4aW7bxu9uKuVasuBoRkCnHHzn7SK53n814VZQd9q1Xqx' as Address<'4aW7bxu9uKuVasuBoRkCnHHzn7SK53n814VZQd9q1Xqx'>;
 
 export enum VotingAccount {
-  Voting,
+  Candidate,
+  Poll,
 }
 
 export function identifyVotingAccount(
@@ -36,12 +35,23 @@ export function identifyVotingAccount(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
-        new Uint8Array([69, 100, 149, 245, 199, 83, 2, 60])
+        new Uint8Array([86, 69, 250, 96, 193, 10, 222, 123])
       ),
       0
     )
   ) {
-    return VotingAccount.Voting;
+    return VotingAccount.Candidate;
+  }
+  if (
+    containsBytes(
+      data,
+      fixEncoderSize(getBytesEncoder(), 8).encode(
+        new Uint8Array([110, 234, 167, 188, 231, 136, 153, 111])
+      ),
+      0
+    )
+  ) {
+    return VotingAccount.Poll;
   }
   throw new Error(
     'The provided account could not be identified as a voting account.'
@@ -49,11 +59,9 @@ export function identifyVotingAccount(
 }
 
 export enum VotingInstruction {
-  Close,
-  Decrement,
-  Increment,
-  Initialize,
-  Set,
+  InitializeCandidate,
+  InitializePoll,
+  Vote,
 }
 
 export function identifyVotingInstruction(
@@ -64,56 +72,34 @@ export function identifyVotingInstruction(
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
-        new Uint8Array([98, 165, 201, 177, 108, 65, 206, 96])
+        new Uint8Array([210, 107, 118, 204, 255, 97, 112, 26])
       ),
       0
     )
   ) {
-    return VotingInstruction.Close;
+    return VotingInstruction.InitializeCandidate;
   }
   if (
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
-        new Uint8Array([106, 227, 168, 59, 248, 27, 150, 101])
+        new Uint8Array([193, 22, 99, 197, 18, 33, 115, 117])
       ),
       0
     )
   ) {
-    return VotingInstruction.Decrement;
+    return VotingInstruction.InitializePoll;
   }
   if (
     containsBytes(
       data,
       fixEncoderSize(getBytesEncoder(), 8).encode(
-        new Uint8Array([11, 18, 104, 9, 104, 174, 59, 33])
+        new Uint8Array([227, 110, 155, 23, 136, 126, 172, 25])
       ),
       0
     )
   ) {
-    return VotingInstruction.Increment;
-  }
-  if (
-    containsBytes(
-      data,
-      fixEncoderSize(getBytesEncoder(), 8).encode(
-        new Uint8Array([175, 175, 109, 31, 13, 152, 155, 237])
-      ),
-      0
-    )
-  ) {
-    return VotingInstruction.Initialize;
-  }
-  if (
-    containsBytes(
-      data,
-      fixEncoderSize(getBytesEncoder(), 8).encode(
-        new Uint8Array([198, 51, 53, 241, 116, 29, 126, 194])
-      ),
-      0
-    )
-  ) {
-    return VotingInstruction.Set;
+    return VotingInstruction.Vote;
   }
   throw new Error(
     'The provided instruction could not be identified as a voting instruction.'
@@ -121,20 +107,14 @@ export function identifyVotingInstruction(
 }
 
 export type ParsedVotingInstruction<
-  TProgram extends string = 'ATgR6mW6mg9WgQrhnUXqrp9zgteiaEo23qi4hRrQcxmh',
+  TProgram extends string = '4aW7bxu9uKuVasuBoRkCnHHzn7SK53n814VZQd9q1Xqx',
 > =
   | ({
-      instructionType: VotingInstruction.Close;
-    } & ParsedCloseInstruction<TProgram>)
+      instructionType: VotingInstruction.InitializeCandidate;
+    } & ParsedInitializeCandidateInstruction<TProgram>)
   | ({
-      instructionType: VotingInstruction.Decrement;
-    } & ParsedDecrementInstruction<TProgram>)
+      instructionType: VotingInstruction.InitializePoll;
+    } & ParsedInitializePollInstruction<TProgram>)
   | ({
-      instructionType: VotingInstruction.Increment;
-    } & ParsedIncrementInstruction<TProgram>)
-  | ({
-      instructionType: VotingInstruction.Initialize;
-    } & ParsedInitializeInstruction<TProgram>)
-  | ({
-      instructionType: VotingInstruction.Set;
-    } & ParsedSetInstruction<TProgram>);
+      instructionType: VotingInstruction.Vote;
+    } & ParsedVoteInstruction<TProgram>);
