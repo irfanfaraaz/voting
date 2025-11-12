@@ -48,9 +48,9 @@ export function AccountUiTransactions({ address }: { address: Address }) {
               <TableBody>
                 {items?.map((item) => (
                   <TableRow key={item.signature}>
-                    <TableHead className="font-mono">
+                    <TableCell className="font-mono">
                       <AppExplorerLink transaction={item.signature} label={ellipsify(item.signature, 8)} />
-                    </TableHead>
+                    </TableCell>
                     <TableCell className="font-mono text-right">
                       <AppExplorerLink block={item.slot.toString()} label={item.slot.toString()} />
                     </TableCell>

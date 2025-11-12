@@ -10,9 +10,11 @@ import {
 } from 'gill'
 import {
   fetchPoll,
+  fetchMaybePoll,
   getInitializePollInstructionAsync,
   getInitializeCandidateInstructionAsync,
   fetchCandidate,
+  fetchMaybeCandidate,
   getVoteInstructionAsync,
 } from '../src'
 import { VOTING_PROGRAM_ADDRESS } from '../src/client/js/generated/programs/voting'
@@ -218,6 +220,94 @@ describe('voting', () => {
     expect(candidateAfter.data.candidateVotes).toEqual(1n)
     expect(candidateAfter.data.candidateVotes).toBeGreaterThan(initialVotes)
   })
+
+  it('Initialize Poll 1 with Biryani Candidates', async () => {
+    // ARRANGE
+    expect.assertions(5)
+    const pollId = 1n
+    const description = 'Vote for the best Biryani'
+    const pollStart = BigInt(Date.now())
+    const pollEnd = BigInt(Date.now() + 86400000)
+    const candidates = ['hyd', 'luck']
+
+    // Check if poll already exists, if not create it
+    const [pollAddress] = await getProgramDerivedAddress({
+      programAddress: VOTING_PROGRAM_ADDRESS,
+      seeds: [getU64Encoder().encode(pollId)],
+    })
+
+    const existingPoll = await fetchMaybePoll(rpc, pollAddress)
+    const pollExists = existingPoll.exists
+
+    if (!pollExists) {
+      // Create poll
+      const pollIx = await getInitializePollInstructionAsync({
+        signer: payer,
+        pollId,
+        description,
+        pollStart,
+        pollEnd,
+    })
+      await sendAndConfirm({ ix: pollIx, payer })
+      console.log('✓ Poll 1 created')
+    } else {
+      console.log('✓ Poll 1 already exists')
+    }
+
+    // Initialize candidates
+    for (const candidateName of candidates) {
+      const hashedCandidateName = createHash('sha256').update(candidateName, 'utf-8').digest()
+
+      const [candidateAddress] = await getProgramDerivedAddress({
+        programAddress: VOTING_PROGRAM_ADDRESS,
+        seeds: [hashedCandidateName, getU64Encoder().encode(pollId)],
+      })
+
+      // Check if candidate already exists
+      const existingCandidate = await fetchMaybeCandidate(rpc, candidateAddress)
+      const candidateExists = existingCandidate.exists
+
+      if (!candidateExists) {
+        const candidateIx = await getInitializeCandidateInstructionAsync({
+          signer: payer,
+          poll: pollAddress,
+          candidate: candidateAddress,
+          candidateName,
+          pollId,
+        })
+        await sendAndConfirm({ ix: candidateIx, payer })
+        console.log(`✓ Candidate "${candidateName}" created`)
+      } else {
+        console.log(`✓ Candidate "${candidateName}" already exists`)
+      }
+    }
+
+    // ASSERT - Verify both candidates exist
+    const hashedHyd = createHash('sha256').update('hyd', 'utf-8').digest()
+    const [hydAddress] = await getProgramDerivedAddress({
+      programAddress: VOTING_PROGRAM_ADDRESS,
+      seeds: [hashedHyd, getU64Encoder().encode(pollId)],
+    })
+    const hydCandidate = await fetchMaybeCandidate(rpc, hydAddress)
+    expect(hydCandidate.exists).toBe(true)
+    if (hydCandidate.exists) {
+      expect(hydCandidate.data.candidateName).toEqual('hyd')
+    }
+
+    const hashedLuck = createHash('sha256').update('luck', 'utf-8').digest()
+    const [luckAddress] = await getProgramDerivedAddress({
+      programAddress: VOTING_PROGRAM_ADDRESS,
+      seeds: [hashedLuck, getU64Encoder().encode(pollId)],
+    })
+    const luckCandidate = await fetchMaybeCandidate(rpc, luckAddress)
+    expect(luckCandidate.exists).toBe(true)
+    if (luckCandidate.exists) {
+      expect(luckCandidate.data.candidateName).toEqual('luck')
+    }
+
+    const poll = await fetchPoll(rpc, pollAddress)
+    expect(poll.data.pollId).toEqual(pollId)
+  })
 })
 
 // Helper function to keep the tests DRY
@@ -233,13 +323,13 @@ async function getLatestBlockhash(): Promise<Readonly<{ blockhash: Blockhash; la
 }
 async function sendAndConfirm({ ix, payer }: { ix: Instruction; payer: KeyPairSigner }) {
   try {
-    const tx = createTransaction({
-      feePayer: payer,
-      instructions: [ix],
-      version: 'legacy',
-      latestBlockhash: await getLatestBlockhash(),
-    })
-    const signedTransaction = await signTransactionMessageWithSigners(tx)
+  const tx = createTransaction({
+    feePayer: payer,
+    instructions: [ix],
+    version: 'legacy',
+    latestBlockhash: await getLatestBlockhash(),
+  })
+  const signedTransaction = await signTransactionMessageWithSigners(tx)
     const result = await sendAndConfirmTransaction(signedTransaction)
     return result
   } catch (error) {

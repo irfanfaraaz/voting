@@ -67,7 +67,7 @@ pub struct InitializePoll<'info> {
     pub signer: Signer<'info>,
 
     #[account(
-        init,
+  init,
         payer =signer,
         space = 8 + Poll::INIT_SPACE,
         seeds = [poll_id.to_le_bytes().as_ref()],
